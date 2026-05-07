@@ -3,6 +3,7 @@ import { Collection, CollectionOptions } from './collection';
 import { KeyValue } from './kv';
 import { FileStorage } from './storage';
 import { Cache } from './cache';
+import { Transaction } from './transaction';
 
 export interface HealthResult {
   status: 'ok' | 'error';
@@ -55,6 +56,13 @@ export class GBase {
         message: error.message,
       };
     }
+  }
+
+  async transaction<T>(fn: (tx: Transaction) => Promise<T>): Promise<T> {
+    const tx = new Transaction(this.config, this.cacheInstance);
+    const result = await fn(tx);
+    await tx.commit();
+    return result;
   }
 
   async rateLimit() {

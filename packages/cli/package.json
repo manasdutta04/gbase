@@ -1,0 +1,33 @@
+{
+  "name": "@gbase/cli",
+  "version": "0.1.0",
+  "description": "CLI for gbase",
+  "main": "dist/bin.js",
+  "type": "module",
+  "bin": {
+    "gbase": "./dist/bin.js"
+  },
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch"
+  },
+  "dependencies": {
+    "chalk": "^5.3.0",
+    "commander": "^12.0.0",
+    "express": "^4.19.2",
+    "inquirer": "^9.2.19",
+    "open": "^10.1.0",
+    "ora": "^8.0.1",
+    "gbase": "workspace:*",
+    "@gbase/github": "workspace:*",
+    "@gbase/gitlab": "workspace:*",
+    "@gbase/bitbucket": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/inquirer": "^9.0.7",
+    "@types/node": "^20.12.7",
+    "tsup": "^8.0.2",
+    "typescript": "^5.4.5"
+  }
+}

@@ -7,3 +7,4 @@ export * from './kv';
 export * from './storage';
 export * from './cache';
 export * from './encryption';
+export * from './transaction';
