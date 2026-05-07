@@ -1,6 +1,9 @@
 {
   "name": "@gbase/cli",
-  "version": "0.1.0",
+  "version": "1.0.0",
+  "files": [
+    "dist"
+  ],
   "description": "CLI for gbase",
   "main": "dist/bin.js",
   "type": "module",

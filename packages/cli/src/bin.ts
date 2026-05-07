@@ -497,4 +497,102 @@ program
     }
   });
 
+program
+  .command('migrate')
+  .description('Migrate data from one provider/repo to another')
+  .requiredOption('--from <path>', 'Path to source .env file')
+  .requiredOption('--to <path>', 'Path to destination .env file')
+  .action(async (options) => {
+    try {
+      console.log(chalk.blue('Starting migration...'));
+      const sourceConfig = loadConfig(options.from);
+      const destConfig = loadConfig(options.to);
+
+      const { adapter: sourceAdapter, db: sourceDb } = buildAdapterAndDb(sourceConfig);
+      const { adapter: destAdapter, db: destDb } = buildAdapterAndDb(destConfig);
+
+      const spinner = ora('Fetching source collections...').start();
+      const files = await sourceAdapter.listFiles('collections', sourceConfig.branch);
+      const collections = Array.from(new Set(files.map((f: any) => f.path.split('/')[0])));
+      spinner.succeed(`Found ${collections.length} collections: ${collections.join(', ')}`);
+
+      for (const colName of collections) {
+        const colSpinner = ora(`Migrating ${colName}...`).start();
+        const records = await sourceDb.collection(colName).findAll();
+        
+        if (records.length > 0) {
+          await destDb.collection(colName).createMany(records);
+          colSpinner.succeed(`Migrated ${records.length} records for ${colName}`);
+        } else {
+          colSpinner.info(`Collection ${colName} is empty, skipping`);
+        }
+      }
+
+      // KV migration
+      const kvSpinner = ora('Migrating KV store...').start();
+      const kvs = await sourceDb.kv().getAll();
+      const keys = Object.keys(kvs);
+      if (keys.length > 0) {
+        for (const key of keys) {
+          await destDb.kv().set(key, kvs[key]);
+        }
+        kvSpinner.succeed(`Migrated ${keys.length} KV pairs`);
+      } else {
+        kvSpinner.info('KV store is empty, skipping');
+      }
+
+      console.log(chalk.green('\n✅ Migration complete!'));
+    } catch (err: any) {
+      console.error(chalk.red(`\nMigration failed: ${err.message}`));
+      process.exit(1);
+    }
+  });
+
+program
+  .command('import <collection> <file>')
+  .description('Import data from a JSON or CSV file')
+  .action(async (collectionName, filePath) => {
+    try {
+      const config = loadConfig();
+      const { db } = buildAdapterAndDb(config);
+      const col = db.collection(collectionName);
+
+      if (!fs.existsSync(filePath)) {
+        throw new Error(`File not found: ${filePath}`);
+      }
+
+      const content = fs.readFileSync(filePath, 'utf-8');
+      let records: any[] = [];
+
+      if (filePath.endsWith('.json')) {
+        records = JSON.parse(content);
+        if (!Array.isArray(records)) records = [records];
+      } else if (filePath.endsWith('.csv')) {
+        const lines = content.split('\n').filter(l => l.trim());
+        const headers = lines[0].split(',').map(h => h.trim().replace(/^"|"$/g, ''));
+        records = lines.slice(1).map(line => {
+          const values = line.split(',').map(v => v.trim().replace(/^"|"$/g, ''));
+          const obj: any = {};
+          headers.forEach((h, i) => {
+            let val: any = values[i];
+            if (val === 'true') val = true;
+            else if (val === 'false') val = false;
+            else if (!isNaN(Number(val)) && val !== '') val = Number(val);
+            obj[h] = val;
+          });
+          return obj;
+        });
+      } else {
+        throw new Error('Unsupported file format. Use .json or .csv');
+      }
+
+      const spinner = ora(`Importing ${records.length} records into ${collectionName}...`).start();
+      await col.createMany(records);
+      spinner.succeed(`Successfully imported ${records.length} records.`);
+    } catch (err: any) {
+      console.error(chalk.red(`Import failed: ${err.message}`));
+      process.exit(1);
+    }
+  });
+
 program.parse(process.argv);

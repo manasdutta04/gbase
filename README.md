@@ -1,89 +1,130 @@
-# gbase
+# GBase
+**Zero-cost, version-controlled database powered by Git.**
 
-A TypeScript monorepo npm package that turns any Git repository (GitHub, GitLab, or Bitbucket) into a zero-cost, version-controlled lightweight database.
+GBase turns any Git repository (GitHub, GitLab, or Bitbucket) into a lightweight, durable, and free database with a MongoDB-like API. Perfect for hobby projects, static sites, and serverless applications.
 
-## Quick Start (GitHub)
+---
+
+## Features
+
+- **Provider Agnostic**: Native adapters for GitHub, GitLab, and Bitbucket.
+- **MongoDB-like API**: Familiar `find`, `create`, `update`, `delete` methods.
+- **Key-Value Store**: Simple global key-value management.
+- **File Storage**: Use your repository as a CDN for static assets.
+- **Encrypted at Rest**: Built-in AES-256 encryption for your sensitive data.
+- **Relations**: Cross-collection references with lazy loading via `.populate()`.
+- **Zod Validation**: Built-in schema validation.
+- **Zero Infrastructure**: No servers, no costs, just Git.
+- **Power CLI**: Interactive setup, data health checks, and cross-provider migration.
+
+---
+
+## Installation
+
+```bash
+# Core engine
+npm install gbase
+
+# Choose your adapter
+npm install @gbase/github
+# or
+npm install @gbase/gitlab
+# or
+npm install @gbase/bitbucket
+```
+
+---
+
+## Quick Start
+
+### 1. Initialize via CLI
+Run the interactive setup wizard in your project root:
+```bash
+npx @gbase/cli init
+```
+
+### 2. Basic Usage
 
 ```typescript
 import { GBase } from 'gbase';
 import { GitHubAdapter } from '@gbase/github';
+import { z } from 'zod';
 
-const adapter = new GitHubAdapter({
-  token: process.env.GITHUB_TOKEN!,
-  owner: 'my-org',
-  repo: 'my-db-repo',
+const db = new GBase({
+  adapter: new GitHubAdapter({
+    token: process.env.GITHUB_TOKEN!,
+    owner: 'user',
+    repo: 'my-db',
+  })
 });
 
-const db = new GBase({ adapter });
+// Define a collection with schema
+const users = db.collection('users', {
+  schema: z.object({
+    name: z.string(),
+    email: z.string().email(),
+  })
+});
 
-async function run() {
-  const users = db.collection('users');
-  await users.create({ name: 'Alice', role: 'admin' });
-  const allUsers = await users.findAll();
-  console.log(allUsers);
+async function main() {
+  // Create a record
+  await users.create({ name: 'Alice', email: 'alice@example.com' });
+
+  // Find records
+  const alice = await users.findOne({ name: 'Alice' });
+  console.log(alice);
 }
 ```
 
-## Quick Start (GitLab)
+---
+
+## Relations & Lazy Loading
+
+GBase supports cross-collection references.
 
 ```typescript
-// Coming in v1
-import { GBase } from 'gbase';
-import { GitLabAdapter } from '@gbase/gitlab';
+import { ref } from 'gbase';
 
-const adapter = new GitLabAdapter({
-  token: process.env.GITLAB_TOKEN!,
-  projectId: '123456',
+const posts = db.collection('posts');
+const users = db.collection('users');
+
+// Create a post referencing a user
+await posts.create({
+  title: 'Hello World',
+  author: ref('users', 'alice-id')
 });
+
+// Fetch post and populate author
+const post = await posts.findById('post-id');
+const populated = await posts.populate(post, ['author']);
+
+console.log(populated.author.name); // 'Alice'
 ```
 
-## API Reference
+---
 
-### Collections
+## CLI Commands
 
-`db.collection<T>(name)`
+| Command | Description |
+| --- | --- |
+| `init` | Interactive setup wizard |
+| `health` | Check connectivity and rate limits |
+| `studio` | Launch a visual database manager (Dark Mode) |
+| `export <collection>` | Export data to JSON/CSV/NDJSON |
+| `import <collection> <file>` | Seed data from JSON or CSV |
+| `migrate --from <env1> --to <env2>` | Move data between providers/repos |
 
-Provides a MongoDB-like API:
-- `create(data)`
-- `findById(id)`
-- `findAll()`
-- `find(query)`
-- `update(id, changes)`
-- `delete(id)`
+---
 
-### Key-Value Store
+## Repo Structure
 
-`db.kv()`
+GBase organizes your data cleanly within your repository:
+- `/collections/{name}/_index.json` (Record metadata for fast queries)
+- `/collections/{name}/{id}.json` (Document content)
+- `/kv/store.json` (Key-value data)
+- `/storage/{path}` (Binary files)
 
-- `get(key)`
-- `set(key, value)`
-- `delete(key)`
+---
 
-### File Storage
-
-`db.storage()`
-
-- `upload(remotePath, content)`
-- `download(remotePath)`
-- `delete(remotePath)`
-
-## Configuration
-
-| Option | Type | Description |
-| --- | --- | --- |
-| `adapter` | `StorageAdapter` | The Git provider adapter |
-| `branch` | `string` | The branch to use (default: 'main') |
-| `debug` | `boolean` | Enable debug logging |
-| `encryption.enabled` | `boolean` | Encrypt data at rest |
-| `encryption.key` | `string` | Encryption key |
-
-## Folder Structure in Repo
-
-- `collections/{name}/_index.json`
-- `collections/{name}/{id}.json`
-- `kv/store.json`
-- `storage/{path}`
-
-## Contributing a new adapter
-
-Implement the `StorageAdapter` interface. See `.agents/ADAPTERS.md` for details.
+## License
+MIT © GBase Team

@@ -17,30 +17,32 @@ export interface LoadedConfig {
   encryption?: { enabled: boolean; key: string }
 }
 
-export function loadConfig(cwd: string = process.cwd()): LoadedConfig {
-  const envPath = path.join(cwd, '.env')
+export function loadConfig(configPath?: string): LoadedConfig {
+  const envPath = configPath ? path.resolve(configPath) : path.join(process.cwd(), '.env')
   if (!fs.existsSync(envPath)) {
-    throw new Error('.env not found in current directory. Run "gbase init" first.')
+    throw new Error(`${envPath} not found.`)
   }
-  dotenv.config({ path: envPath })
+  
+  const content = fs.readFileSync(envPath, 'utf-8')
+  const env = dotenv.parse(content)
 
-  const provider = process.env.GBASE_PROVIDER as LoadedConfig['provider']
-  if (!provider) throw new Error('GBASE_PROVIDER not set in .env')
+  const provider = env.GBASE_PROVIDER as LoadedConfig['provider']
+  if (!provider) throw new Error('GBASE_PROVIDER not set in config')
 
   return {
     provider,
-    token: process.env.GBASE_TOKEN || '',
-    branch: process.env.GBASE_BRANCH || 'main',
-    owner: process.env.GBASE_OWNER,
-    repo: process.env.GBASE_REPO,
-    projectId: process.env.GBASE_PROJECT_ID,
-    baseUrl: process.env.GBASE_BASE_URL,
-    username: process.env.GBASE_USERNAME,
-    workspace: process.env.GBASE_WORKSPACE,
-    repoSlug: process.env.GBASE_REPO_SLUG,
-    appPassword: process.env.GBASE_APP_PASSWORD,
-    encryption: process.env.GBASE_ENCRYPTION_ENABLED === 'true'
-      ? { enabled: true, key: process.env.GBASE_ENCRYPTION_KEY || '' }
+    token: env.GBASE_TOKEN || '',
+    branch: env.GBASE_BRANCH || 'main',
+    owner: env.GBASE_OWNER,
+    repo: env.GBASE_REPO,
+    projectId: env.GBASE_PROJECT_ID,
+    baseUrl: env.GBASE_BASE_URL,
+    username: env.GBASE_USERNAME,
+    workspace: env.GBASE_WORKSPACE,
+    repoSlug: env.GBASE_REPO_SLUG,
+    appPassword: env.GBASE_APP_PASSWORD,
+    encryption: env.GBASE_ENCRYPTION_ENABLED === 'true'
+      ? { enabled: true, key: env.GBASE_ENCRYPTION_KEY || '' }
       : undefined,
   }
 }

@@ -138,6 +138,26 @@ export class Collection<T extends Record<string, any>> {
     return this.deserializeRecord(file.content);
   }
 
+  /**
+   * Resolves references in a record.
+   * @param record The record containing references
+   * @param fields The fields to populate
+   */
+  async populate(record: T, fields: (keyof T)[]): Promise<T> {
+    const results = { ...record };
+    for (const field of fields) {
+      const val = results[field];
+      if (val && typeof val === 'object' && (val as any).__gbase_ref) {
+        const ref = val as any;
+        // Create a temporary collection instance to fetch the related record
+        // We use any because we don't know the type of the related collection here
+        const col = new Collection<any>(this.config, this.cache, ref.collection);
+        results[field] = await col.findById(ref.id);
+      }
+    }
+    return results;
+  }
+
   async findAll(): Promise<T[]> {
     const { index } = await this.loadIndex();
     const ids = Object.keys(index);

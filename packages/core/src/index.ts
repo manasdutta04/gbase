@@ -8,3 +8,4 @@ export * from './storage';
 export * from './cache';
 export * from './encryption';
 export * from './transaction';
+export * from './relations';
