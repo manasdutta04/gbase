@@ -51,7 +51,10 @@ export class GitHubAdapter implements StorageAdapter {
         }
 
         if (response.status === 409) {
-          throw new ConflictError('Concurrent modification detected (SHA mismatch).', url);
+          const method = options.method || 'GET';
+          if (method !== 'GET' && method !== 'HEAD') {
+            throw new ConflictError('Concurrent modification detected (SHA mismatch).', url);
+          }
         }
 
         return response;
@@ -117,7 +120,7 @@ export class GitHubAdapter implements StorageAdapter {
     // We use the git trees API as it's better for listing and filtering
     // First, get the commit of the branch
     const refRes = await this.request(`/repos/${this.config.owner}/${this.config.repo}/git/refs/heads/${branch}`);
-    if (refRes.status === 404) return []; // Branch might not exist yet
+    if (refRes.status === 404 || refRes.status === 409) return []; // Branch might not exist yet
     if (!refRes.ok) throw new Error(`Failed to get ref: ${refRes.statusText}`);
     const refData: any = await refRes.json();
     const commitSha = refData.object.sha;
@@ -136,12 +139,36 @@ export class GitHubAdapter implements StorageAdapter {
         type: item.type === 'tree' ? 'dir' : 'file',
       }));
   }
+  private async bootstrapRepo(branch: string): Promise<void> {
+    try {
+      const res = await this.request(`/repos/${this.config.owner}/${this.config.repo}/contents/.gbase/.gitkeep`, {
+        method: 'PUT',
+        body: JSON.stringify({
+          message: 'Initial commit by gbase',
+          content: Buffer.from('', 'utf-8').toString('base64'),
+          branch: branch,
+        }),
+      });
+      if (!res.ok && res.status !== 422) {
+        throw new Error(`Failed to bootstrap repo: ${res.statusText}`);
+      }
+    } catch (e: any) {
+      if (!(e instanceof ConflictError)) {
+        throw e;
+      }
+    }
+  }
+
 
   async batchWrite(ops: BatchOp[], commitMessage: string, branch: string): Promise<void> {
     if (ops.length === 0) return;
 
     // 1. Get current branch reference
-    const refRes = await this.request(`/repos/${this.config.owner}/${this.config.repo}/git/refs/heads/${branch}`);
+    let refRes = await this.request(`/repos/${this.config.owner}/${this.config.repo}/git/refs/heads/${branch}`);
+    if (refRes.status === 404 || refRes.status === 409) {
+      await this.bootstrapRepo(branch);
+      refRes = await this.request(`/repos/${this.config.owner}/${this.config.repo}/git/refs/heads/${branch}`);
+    }
     if (!refRes.ok) throw new Error(`Failed to get ref: ${refRes.statusText}`);
     const refData: any = await refRes.json();
     const latestCommitSha = refData.object.sha;
@@ -215,10 +242,11 @@ export class GitHubAdapter implements StorageAdapter {
         body: JSON.stringify({
           name: this.config.repo,
           private: true,
-          auto_init: true, // Need an initial commit to get a branch
+          auto_init: false,
         }),
       });
       if (!createRes.ok) throw new Error(`Failed to create repository: ${createRes.statusText}`);
+      await this.bootstrapRepo(this.config.branch!);
     } else if (!res.ok) {
       throw new Error(`Failed to check repository: ${res.statusText}`);
     }
