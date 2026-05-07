@@ -5,107 +5,46 @@ import chalk from 'chalk';
 import ora from 'ora';
 import open from 'open';
 import express from 'express';
-import { GBase } from 'gbase';
-import { GitHubAdapter } from '@gbase/github';
-import { GitLabAdapter } from '@gbase/gitlab';
-import { BitbucketAdapter } from '@gbase/bitbucket';
 import fs from 'fs';
-import path from 'path';
 import crypto from 'crypto';
-import 'dotenv/config';
+import { loadConfig, buildAdapterAndDb, LoadedConfig } from './config.js';
 
 const program = new Command();
 program.name('gbase').description('CLI for gbase database').version('0.1.0');
-
-async function loadConfig() {
-  let provider = process.env.GBASE_PROVIDER;
-  if (!provider) {
-    if (process.env.GBASE_OWNER && process.env.GBASE_TOKEN && !process.env.GBASE_USERNAME) {
-      provider = 'github';
-    } else if (process.env.GBASE_PROJECT_ID) {
-      provider = 'gitlab';
-    } else if (process.env.GBASE_WORKSPACE) {
-      provider = 'bitbucket';
-    }
-  }
-
-  if (!provider) {
-    console.error(chalk.red('No configuration found. Please run `npx gbase init` first.'));
-    process.exit(1);
-  }
-
-  let adapter;
-  if (provider.toLowerCase() === 'github') {
-    adapter = new GitHubAdapter({
-      token: process.env.GBASE_TOKEN!,
-      owner: process.env.GBASE_OWNER!,
-      repo: process.env.GBASE_REPO!,
-      branch: process.env.GBASE_BRANCH || 'main',
-    });
-  } else if (provider.toLowerCase() === 'gitlab') {
-    adapter = new GitLabAdapter({
-      token: process.env.GBASE_TOKEN!,
-      projectId: process.env.GBASE_PROJECT_ID!,
-      baseUrl: process.env.GBASE_BASE_URL,
-      branch: process.env.GBASE_BRANCH || 'main',
-    });
-  } else if (provider.toLowerCase() === 'bitbucket') {
-    adapter = new BitbucketAdapter({
-      username: process.env.GBASE_USERNAME!,
-      appPassword: process.env.GBASE_APP_PASSWORD!,
-      workspace: process.env.GBASE_WORKSPACE!,
-      repoSlug: process.env.GBASE_REPO_SLUG!,
-      branch: process.env.GBASE_BRANCH || 'main',
-    });
-  } else {
-    console.error(chalk.red(`Unknown provider: ${provider}`));
-    process.exit(1);
-  }
-
-  const db = new GBase({
-    adapter: adapter,
-    branch: process.env.GBASE_BRANCH || 'main',
-    encryption: process.env.GBASE_ENCRYPTION_KEY ? {
-      enabled: true,
-      key: process.env.GBASE_ENCRYPTION_KEY
-    } : undefined
-  });
-
-  return { adapter, db, provider: provider.toLowerCase() };
-}
 
 program
   .command('init')
   .description('Interactive setup wizard')
   .action(async () => {
-    const { provider } = await inquirer.prompt([{
-      type: 'list', name: 'provider', message: 'Which provider?', choices: ['GitHub', 'GitLab', 'Bitbucket']
+    const { providerChoice } = await inquirer.prompt([{
+      type: 'list', name: 'providerChoice', message: 'Which provider?', choices: ['GitHub', 'GitLab', 'Bitbucket']
     }]);
 
+    const provider = providerChoice.toLowerCase() as 'github' | 'gitlab' | 'bitbucket';
     let configValues: any = { GBASE_PROVIDER: provider };
 
-    if (provider === 'GitHub') {
+    if (provider === 'github') {
       const answers = await inquirer.prompt([
-        { name: 'token', message: 'GitHub token:' },
+        { type: 'password', name: 'token', message: 'GitHub token:' },
         { name: 'owner', message: 'Repository owner:' },
         { name: 'repo', message: 'Repository name:' }
       ]);
       configValues.GBASE_TOKEN = answers.token;
       configValues.GBASE_OWNER = answers.owner;
       configValues.GBASE_REPO = answers.repo;
-    } else if (provider === 'GitLab') {
+    } else if (provider === 'gitlab') {
       const answers = await inquirer.prompt([
-        { name: 'token', message: 'GitLab token:' },
+        { type: 'password', name: 'token', message: 'GitLab token:' },
         { name: 'projectId', message: 'Project ID or "namespace/repo":' },
-        { name: 'baseUrl', message: 'Base URL (leave empty for https://gitlab.com):' }
+        { name: 'baseUrl', message: 'Base URL (leave empty for https://gitlab.com):', default: 'https://gitlab.com' }
       ]);
       configValues.GBASE_TOKEN = answers.token;
       configValues.GBASE_PROJECT_ID = answers.projectId;
-      if (answers.baseUrl) configValues.GBASE_BASE_URL = answers.baseUrl;
-    } else if (provider === 'Bitbucket') {
+      configValues.GBASE_BASE_URL = answers.baseUrl;
+    } else if (provider === 'bitbucket') {
       const answers = await inquirer.prompt([
         { name: 'username', message: 'Bitbucket username:' },
-        { name: 'appPassword', message: 'App password:' },
+        { type: 'password', name: 'appPassword', message: 'App password:' },
         { name: 'workspace', message: 'Workspace slug:' },
         { name: 'repoSlug', message: 'Repository slug:' }
       ]);
@@ -124,6 +63,8 @@ program
       { type: 'confirm', name: 'encrypt', message: 'Enable encryption?', default: false }
     ]);
 
+    configValues.GBASE_ENCRYPTION_ENABLED = encrypt ? 'true' : 'false';
+
     if (encrypt) {
       const key = crypto.randomBytes(32).toString('hex');
       console.log(chalk.yellow(`\nGenerated encryption key: ${key}`));
@@ -136,13 +77,13 @@ program
     ]);
 
     let envContent = '';
-    let tsContent = 'export default {\n';
+    let tsContent = 'import { GBaseConfig } from "gbase";\n\nexport default {\n';
 
     for (const [key, value] of Object.entries(configValues)) {
       envContent += `${key}=${value}\n`;
       tsContent += `  ${key}: '${value}',\n`;
     }
-    tsContent += '};\n';
+    tsContent += '} as any;\n';
 
     if (configType === '.env' || configType === 'both') {
       fs.writeFileSync('.env', envContent);
@@ -153,23 +94,35 @@ program
       console.log(chalk.green('✅ Wrote gbase.config.ts'));
     }
 
-    // Set process.env so loadConfig can use it now
-    for (const [key, value] of Object.entries(configValues)) {
-      process.env[key] = value as string;
-    }
-
     const spinner = ora('Verifying connection...').start();
     try {
-      const { adapter, db } = await loadConfig();
+      const tempConfig: LoadedConfig = {
+        provider,
+        token: configValues.GBASE_TOKEN,
+        branch: configValues.GBASE_BRANCH,
+        owner: configValues.GBASE_OWNER,
+        repo: configValues.GBASE_REPO,
+        projectId: configValues.GBASE_PROJECT_ID,
+        baseUrl: configValues.GBASE_BASE_URL,
+        username: configValues.GBASE_USERNAME,
+        workspace: configValues.GBASE_WORKSPACE,
+        repoSlug: configValues.GBASE_REPO_SLUG,
+        appPassword: configValues.GBASE_APP_PASSWORD,
+        encryption: encrypt ? { enabled: true, key: configValues.GBASE_ENCRYPTION_KEY } : undefined
+      };
+      
+      const { adapter } = buildAdapterAndDb(tempConfig);
       await adapter.ensureRepo();
       spinner.succeed('Connection verified! Repository is ready.');
       
       console.log(chalk.blue('\nSummary:'));
-      console.log(`Provider: ${provider}`);
+      console.log(`Provider: ${providerChoice}`);
       console.log(`Branch: ${branch}`);
       console.log(`Encryption: ${encrypt ? 'Enabled' : 'Disabled'}`);
     } catch (err: any) {
-      spinner.fail(`Failed to verify connection: ${err.message}`);
+      spinner.fail();
+      console.error(chalk.red(`Failed to verify connection: ${err.message}`));
+      process.exit(1);
     }
   });
 
@@ -177,18 +130,27 @@ program
   .command('health')
   .description('Check database health')
   .action(async () => {
-    const { adapter, db, provider } = await loadConfig();
-    const spinner = ora('Checking health...').start();
     try {
+      const config = loadConfig();
+      const { adapter, db } = buildAdapterAndDb(config);
+      
+      const spinner = ora('Checking health...').start();
       const health = await db.health();
-      const files = await adapter.listFiles('collections', process.env.GBASE_BRANCH || 'main');
-      const collections = Array.from(new Set(files.map(f => f.path.split('/')[0])));
+      const files = await adapter.listFiles('collections', config.branch);
+      const collections = Array.from(new Set(files.map((f: any) => f.path.split('/')[0])));
       
       spinner.stop();
       console.log(chalk.bold('\nGBase Health Report'));
       console.log('-------------------');
-      console.log(`Provider:     ${provider}`);
-      console.log(`Branch:       ${process.env.GBASE_BRANCH || 'main'}`);
+      console.log(`Provider:     ${config.provider}`);
+      
+      let repoStr = '';
+      if (config.provider === 'github') repoStr = `${config.owner}/${config.repo}`;
+      if (config.provider === 'gitlab') repoStr = `${config.projectId}`;
+      if (config.provider === 'bitbucket') repoStr = `${config.workspace}/${config.repoSlug}`;
+      
+      console.log(`Repository:   ${repoStr}`);
+      console.log(`Branch:       ${config.branch}`);
       
       if (health.rateLimit) {
         const resetStr = health.rateLimit.resetsAt !== 'unknown' 
@@ -199,11 +161,13 @@ program
         console.log(`Rate limit:   not available`);
       }
       
-      console.log(`Collections:  ${collections.length > 0 ? collections.join(', ') : 'None'}`);
-      console.log(`Status:       ${health.status === 'ok' ? chalk.green('healthy') : chalk.red('error')}`);
+      console.log(`Collections:  ${collections.length > 0 ? collections.join(', ') : '(none)'}`);
+      console.log(`Status:       ${health.status === 'ok' ? chalk.green('healthy') : chalk.red('error')} ${health.message ? '- ' + health.message : ''}`);
+      
+      if (health.status !== 'ok') process.exit(1);
     } catch (err: any) {
-      spinner.stop();
       console.error(chalk.red(`Error checking health: ${err.message}`));
+      process.exit(1);
     }
   });
 
@@ -213,27 +177,31 @@ program
   .option('--format <format>', 'json|csv|ndjson', 'json')
   .option('--out <filepath>', 'Output file path')
   .action(async (collectionName, options) => {
-    const { db } = await loadConfig();
-    const spinner = ora(`Fetching records from ${collectionName}...`).start();
     try {
+      const config = loadConfig();
+      const { db } = buildAdapterAndDb(config);
+      
       const col = db.collection(collectionName);
       const records = await col.findAll();
-      spinner.stop();
+      console.error(`Exported ${records.length} records.`); // write to stderr
 
       let output = '';
       if (options.format === 'json') {
         output = JSON.stringify(records, null, 2);
       } else if (options.format === 'ndjson') {
-        output = records.map(r => JSON.stringify(r)).join('\n');
+        output = records.map((r: any) => JSON.stringify(r)).join('\n');
       } else if (options.format === 'csv') {
         if (records.length === 0) {
           output = '';
         } else {
           const keys = Object.keys(records[0]);
           const header = keys.join(',');
-          const rows = records.map(r => keys.map(k => {
+          const rows = records.map((r: any) => keys.map(k => {
             const val = r[k];
-            const str = val === null || val === undefined ? '' : String(val);
+            let str = '';
+            if (val !== null && val !== undefined) {
+              str = typeof val === 'object' ? JSON.stringify(val) : String(val);
+            }
             return `"${str.replace(/"/g, '""')}"`;
           }).join(','));
           output = [header, ...rows].join('\n');
@@ -244,13 +212,13 @@ program
 
       if (options.out) {
         fs.writeFileSync(options.out, output);
-        console.log(chalk.green(`Exported ${records.length} records to ${options.out}`));
+        console.error(chalk.green(`Export written to ${options.out}`));
       } else {
         console.log(output);
       }
     } catch (err: any) {
-      spinner.stop();
       console.error(chalk.red(`Export failed: ${err.message}`));
+      process.exit(1);
     }
   });
 
@@ -258,198 +226,275 @@ program
   .command('studio')
   .description('Start the local studio UI')
   .action(async () => {
-    const { adapter, db, provider } = await loadConfig();
-    const app = express();
-    app.use(express.json());
+    try {
+      const config = loadConfig();
+      const { adapter, db } = buildAdapterAndDb(config);
+      
+      const app = express();
+      app.use(express.json());
 
-    const HTML = `
-<!DOCTYPE html>
-<html>
-<head>
-  <title>gbase studio</title>
-  <style>
-    body { font-family: -apple-system, system-ui, sans-serif; margin: 0; display: flex; height: 100vh; }
-    .sidebar { width: 250px; background: #f4f4f5; border-right: 1px solid #e4e4e7; padding: 1rem; overflow-y: auto; }
-    .main { flex: 1; display: flex; flex-direction: column; }
-    .header { height: 50px; border-bottom: 1px solid #e4e4e7; display: flex; align-items: center; padding: 0 1rem; background: white; }
-    .content { flex: 1; padding: 1rem; overflow-y: auto; }
-    ul { list-style: none; padding: 0; }
-    li { padding: 0.5rem; cursor: pointer; border-radius: 4px; }
-    li:hover { background: #e4e4e7; }
-    table { width: 100%; border-collapse: collapse; }
-    th, td { padding: 0.5rem; border: 1px solid #e4e4e7; text-align: left; }
-    th { background: #f4f4f5; }
-    .json-editor { width: 100%; height: 300px; font-family: monospace; }
-  </style>
-</head>
-<body>
-  <div class="sidebar">
-    <h3>Collections</h3>
-    <ul id="colList"></ul>
-    <hr>
-    <div style="cursor:pointer; padding:0.5rem;" onclick="loadKV()">Key-Value Store</div>
-  </div>
-  <div class="main">
-    <div class="header">
-      <strong style="margin-right:auto">gbase studio</strong>
-      <span style="color:#71717a">Provider: ${provider} | Branch: ${process.env.GBASE_BRANCH || 'main'}</span>
+      const HTML = `
+  <!DOCTYPE html>
+  <html>
+  <head>
+    <title>gbase studio</title>
+    <style>
+      body { font-family: monospace; margin: 0; display: flex; height: 100vh; background-color: #0d1117; color: white; }
+      .sidebar { width: 250px; background: #161b22; border-right: 1px solid #30363d; padding: 1rem; overflow-y: auto; }
+      .main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+      .header { height: 50px; border-bottom: 1px solid #30363d; display: flex; align-items: center; padding: 0 1rem; background: #161b22; }
+      .content { flex: 1; padding: 1rem; overflow-y: auto; }
+      ul { list-style: none; padding: 0; }
+      li { padding: 0.5rem; cursor: pointer; border-radius: 4px; }
+      li:hover { background: #30363d; }
+      table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
+      th, td { padding: 0.5rem; border: 1px solid #30363d; text-align: left; }
+      th { background: #161b22; }
+      button { background: #238636; color: white; border: none; padding: 0.5rem 1rem; border-radius: 4px; cursor: pointer; }
+      button:hover { background: #2ea043; }
+      .btn-danger { background: #da3633; }
+      .btn-danger:hover { background: #f85149; }
+      textarea { width: 100%; height: 200px; background: #0d1117; color: white; border: 1px solid #30363d; padding: 0.5rem; font-family: monospace; }
+    </style>
+  </head>
+  <body>
+    <div class="sidebar">
+      <h3>Collections</h3>
+      <ul id="colList"></ul>
+      <hr style="border-color:#30363d">
+      <div style="cursor:pointer; padding:0.5rem;" onclick="loadKV()">Key-Value Store</div>
     </div>
-    <div class="content" id="content">
-      Welcome to gbase studio. Select a collection on the left.
+    <div class="main">
+      <div class="header">
+        <strong style="margin-right:auto">gbase studio</strong>
+        <span style="color:#8b949e">Provider: ${config.provider} | Branch: ${config.branch}</span>
+      </div>
+      <div class="content" id="content">
+        Welcome to gbase studio. Select a collection on the left.
+      </div>
     </div>
-  </div>
-  <script>
-    let activeCollection = null;
-    
-    async function fetchCollections() {
-      const res = await fetch('/api/collections');
-      const names = await res.json();
-      const list = document.getElementById('colList');
-      list.innerHTML = names.map(n => \`<li onclick="loadCollection('\${n}')">\${n}</li>\`).join('');
-    }
-
-    async function loadCollection(name) {
-      activeCollection = name;
-      const res = await fetch(\`/api/collections/\${name}\`);
-      const records = await res.json();
+    <script>
+      let activeCollection = null;
       
-      if (records.length === 0) {
-        document.getElementById('content').innerHTML = \`<h2>\${name}</h2><p>No records.</p><button onclick="createRecord()">New Record</button>\`;
-        return;
+      async function fetchCollections() {
+        const res = await fetch('/api/collections');
+        const names = await res.json();
+        const list = document.getElementById('colList');
+        list.innerHTML = names.map(n => \`<li onclick="loadCollection('\${n}')">\${n}</li>\`).join('');
+      }
+
+      async function loadCollection(name) {
+        activeCollection = name;
+        const res = await fetch(\`/api/collections/\${name}\`);
+        const records = await res.json();
+        
+        let html = \`<h2>\${name}</h2><button onclick="showCreateForm()">Add record</button><br><br>\`;
+        
+        if (records.length === 0) {
+          html += \`<p>No records.</p>\`;
+          document.getElementById('content').innerHTML = html;
+          return;
+        }
+        
+        const keys = Object.keys(records[0]);
+        html += \`<table><tr>\`;
+        html += \`<th>id</th>\`;
+        keys.filter(k => k !== 'id').forEach(k => html += \`<th>\${k}</th>\`);
+        html += \`<th>Actions</th></tr>\`;
+        
+        records.forEach(r => {
+          html += \`<tr>\`;
+          html += \`<td>\${r.id}</td>\`;
+          keys.filter(k => k !== 'id').forEach(k => html += \`<td>\${JSON.stringify(r[k]).substring(0,50)}</td>\`);
+          html += \`<td>
+            <button onclick='showEditForm(\${JSON.stringify(r)})'>Edit</button> 
+            <button class="btn-danger" onclick="deleteRecord('\${r.id}')">Delete</button>
+          </td></tr>\`;
+        });
+        html += '</table>';
+        document.getElementById('content').innerHTML = html;
+      }
+
+      async function loadKV() {
+        activeCollection = null;
+        const res = await fetch('/api/kv');
+        const kvs = await res.json();
+        const keys = Object.keys(kvs);
+        
+        let html = \`<h2>Key-Value Store</h2><button onclick="showCreateKVForm()">Add key</button><br><br>\`;
+        html += \`<table><tr><th>Key</th><th>Value</th><th>Actions</th></tr>\`;
+        keys.forEach(k => {
+          html += \`<tr><td>\${k}</td><td>\${JSON.stringify(kvs[k])}</td><td>
+            <button onclick='showEditKVForm("\${k}", \${JSON.stringify(kvs[k])})'>Edit</button>
+            <button class="btn-danger" onclick="deleteKV('\${k}')">Delete</button>
+          </td></tr>\`;
+        });
+        html += '</table>';
+        document.getElementById('content').innerHTML = html;
+      }
+
+      function showCreateForm() {
+        document.getElementById('content').innerHTML = \`
+          <h2>Add record to \${activeCollection}</h2>
+          <textarea id="jsonEditor">{\n  \n}</textarea><br><br>
+          <button onclick="saveNewRecord()">Save</button>
+          <button onclick="loadCollection('\${activeCollection}')">Cancel</button>
+        \`;
+      }
+
+      function showEditForm(record) {
+        document.getElementById('content').innerHTML = \`
+          <h2>Edit record in \${activeCollection}</h2>
+          <textarea id="jsonEditor">\${JSON.stringify(record, null, 2)}</textarea><br><br>
+          <button onclick="updateRecord('\${record.id}')">Save</button>
+          <button onclick="loadCollection('\${activeCollection}')">Cancel</button>
+        \`;
       }
       
-      const keys = Object.keys(records[0]);
-      let html = \`<h2>\${name}</h2><button onclick="createRecord()">New Record</button><br><br><table><tr>\`;
-      html += keys.map(k => \`<th>\${k}</th>\`).join('');
-      html += \`<th>Actions</th></tr>\`;
-      
-      records.forEach(r => {
-        html += \`<tr>\`;
-        html += keys.map(k => \`<td>\${JSON.stringify(r[k]).substring(0,50)}</td>\`).join('');
-        html += \`<td><button onclick="editRecord('\${r.id}')">Edit</button> <button onclick="deleteRecord('\${r.id}')">Delete</button></td></tr>\`;
+      function showCreateKVForm() {
+        document.getElementById('content').innerHTML = \`
+          <h2>Add KV</h2>
+          <input type="text" id="kvKey" placeholder="Key" style="width:100%; padding:0.5rem; margin-bottom:1rem; background:#0d1117; color:white; border:1px solid #30363d;">
+          <textarea id="jsonEditor">"value"</textarea><br><br>
+          <button onclick="saveNewKV()">Save</button>
+          <button onclick="loadKV()">Cancel</button>
+        \`;
+      }
+
+      function showEditKVForm(key, value) {
+        document.getElementById('content').innerHTML = \`
+          <h2>Edit KV: \${key}</h2>
+          <input type="hidden" id="kvKey" value="\${key}">
+          <textarea id="jsonEditor">\${JSON.stringify(value, null, 2)}</textarea><br><br>
+          <button onclick="saveNewKV()">Save</button>
+          <button onclick="loadKV()">Cancel</button>
+        \`;
+      }
+
+      function saveNewRecord() {
+        try {
+          const data = JSON.parse(document.getElementById('jsonEditor').value);
+          fetch(\`/api/collections/\${activeCollection}\`, {
+            method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data)
+          }).then(() => loadCollection(activeCollection));
+        } catch(e) { alert("Invalid JSON: " + e.message); }
+      }
+
+      function updateRecord(id) {
+        try {
+          const data = JSON.parse(document.getElementById('jsonEditor').value);
+          fetch(\`/api/collections/\${activeCollection}/\${id}\`, {
+            method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data)
+          }).then(() => loadCollection(activeCollection));
+        } catch(e) { alert("Invalid JSON: " + e.message); }
+      }
+
+      function saveNewKV() {
+        try {
+          const key = document.getElementById('kvKey').value;
+          const val = JSON.parse(document.getElementById('jsonEditor').value);
+          if(!key) return alert("Key required");
+          fetch(\`/api/kv/\${key}\`, {
+            method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({value: val})
+          }).then(() => loadKV());
+        } catch(e) { alert("Invalid JSON: " + e.message); }
+      }
+
+      function deleteRecord(id) {
+        if (confirm('Delete?')) {
+          fetch(\`/api/collections/\${activeCollection}/\${id}\`, { method: 'DELETE' })
+            .then(() => loadCollection(activeCollection));
+        }
+      }
+
+      function deleteKV(key) {
+        if (confirm('Delete?')) {
+          fetch(\`/api/kv/\${key}\`, { method: 'DELETE' })
+            .then(() => loadKV());
+        }
+      }
+
+      fetchCollections();
+    </script>
+  </body>
+  </html>
+      `;
+
+      app.get('/', (req, res) => res.send(HTML));
+
+      app.get('/api/collections', async (req, res) => {
+        try {
+          const files = await adapter.listFiles('collections', config.branch);
+          const collections = Array.from(new Set(files.map((f: any) => f.path.split('/')[0])));
+          res.json(collections);
+        } catch (e: any) { res.status(500).json({error: e.message}) }
       });
-      html += '</table>';
-      document.getElementById('content').innerHTML = html;
-    }
 
-    async function loadKV() {
-      activeCollection = null;
-      const res = await fetch('/api/kv');
-      const kvs = await res.json();
-      const keys = Object.keys(kvs);
-      
-      let html = \`<h2>Key-Value Store</h2><table><tr><th>Key</th><th>Value</th><th>Actions</th></tr>\`;
-      keys.forEach(k => {
-        html += \`<tr><td>\${k}</td><td>\${JSON.stringify(kvs[k])}</td><td><button onclick="deleteKV('\${k}')">Delete</button></td></tr>\`;
+      app.get('/api/collections/:name', async (req, res) => {
+        try {
+          const col = db.collection(req.params.name);
+          const data = await col.findAll();
+          res.json(data);
+        } catch (e: any) { res.status(500).json({error: e.message}) }
       });
-      html += '</table>';
-      document.getElementById('content').innerHTML = html;
+
+      app.post('/api/collections/:name', async (req, res) => {
+        try {
+          const col = db.collection(req.params.name);
+          const data = await col.create(req.body);
+          res.json(data);
+        } catch (e: any) { res.status(500).json({error: e.message}) }
+      });
+
+      app.put('/api/collections/:name/:id', async (req, res) => {
+        try {
+          const col = db.collection(req.params.name);
+          await col.update(req.params.id, req.body);
+          res.json({success: true});
+        } catch (e: any) { res.status(500).json({error: e.message}) }
+      });
+
+      app.delete('/api/collections/:name/:id', async (req, res) => {
+        try {
+          const col = db.collection(req.params.name);
+          await col.delete(req.params.id);
+          res.json({success: true});
+        } catch (e: any) { res.status(500).json({error: e.message}) }
+      });
+
+      app.get('/api/kv', async (req, res) => {
+        try {
+          const store = db.kv();
+          const data = await store.getAll();
+          res.json(data);
+        } catch (e: any) { res.status(500).json({error: e.message}) }
+      });
+
+      app.put('/api/kv/:key', async (req, res) => {
+        try {
+          const store = db.kv();
+          await store.set(req.params.key, req.body.value);
+          res.json({success: true});
+        } catch (e: any) { res.status(500).json({error: e.message}) }
+      });
+
+      app.delete('/api/kv/:key', async (req, res) => {
+        try {
+          const store = db.kv();
+          await store.delete(req.params.key);
+          res.json({success: true});
+        } catch (e: any) { res.status(500).json({error: e.message}) }
+      });
+
+      const port = process.env.PORT || 4321;
+      app.listen(port, () => {
+        console.log(chalk.green(`gbase studio running at http://localhost:${port} — press Ctrl+C to stop`));
+        open(`http://localhost:${port}`);
+      });
+    } catch (err: any) {
+      console.error(chalk.red(`Error starting studio: ${err.message}`));
+      process.exit(1);
     }
-
-    function editRecord(id) {
-      // In a real app we'd fetch the single record and show an editor
-      alert('Edit functionality via API requires providing valid JSON. Please implement via POSTman for now.');
-    }
-    
-    function createRecord() {
-      const data = prompt('Enter JSON for new record:');
-      if (data) {
-        fetch(\`/api/collections/\${activeCollection}\`, {
-          method: 'POST', headers: {'Content-Type': 'application/json'}, body: data
-        }).then(() => loadCollection(activeCollection));
-      }
-    }
-
-    function deleteRecord(id) {
-      if (confirm('Delete?')) {
-        fetch(\`/api/collections/\${activeCollection}/\${id}\`, { method: 'DELETE' })
-          .then(() => loadCollection(activeCollection));
-      }
-    }
-
-    function deleteKV(key) {
-      if (confirm('Delete?')) {
-        fetch(\`/api/kv/\${key}\`, { method: 'DELETE' })
-          .then(() => loadKV());
-      }
-    }
-
-    fetchCollections();
-  </script>
-</body>
-</html>
-    `;
-
-    app.get('/', (req, res) => {
-      res.send(HTML);
-    });
-
-    app.get('/api/collections', async (req, res) => {
-      const files = await adapter.listFiles('collections', process.env.GBASE_BRANCH || 'main');
-      const collections = Array.from(new Set(files.map(f => f.path.split('/')[0])));
-      res.json(collections);
-    });
-
-    app.get('/api/collections/:name', async (req, res) => {
-      try {
-        const col = db.collection(req.params.name);
-        const data = await col.findAll();
-        res.json(data);
-      } catch (e: any) { res.status(500).json({error: e.message}) }
-    });
-
-    app.post('/api/collections/:name', async (req, res) => {
-      try {
-        const col = db.collection(req.params.name);
-        const data = await col.create(req.body);
-        res.json(data);
-      } catch (e: any) { res.status(500).json({error: e.message}) }
-    });
-
-    app.put('/api/collections/:name/:id', async (req, res) => {
-      try {
-        const col = db.collection(req.params.name);
-        await col.update(req.params.id, req.body);
-        res.json({success: true});
-      } catch (e: any) { res.status(500).json({error: e.message}) }
-    });
-
-    app.delete('/api/collections/:name/:id', async (req, res) => {
-      try {
-        const col = db.collection(req.params.name);
-        await col.delete(req.params.id);
-        res.json({success: true});
-      } catch (e: any) { res.status(500).json({error: e.message}) }
-    });
-
-    app.get('/api/kv', async (req, res) => {
-      try {
-        const store = db.kv();
-        const data = await store.getAll();
-        res.json(data);
-      } catch (e: any) { res.status(500).json({error: e.message}) }
-    });
-
-    app.put('/api/kv/:key', async (req, res) => {
-      try {
-        const store = db.kv();
-        await store.set(req.params.key, req.body.value);
-        res.json({success: true});
-      } catch (e: any) { res.status(500).json({error: e.message}) }
-    });
-
-    app.delete('/api/kv/:key', async (req, res) => {
-      try {
-        const store = db.kv();
-        await store.delete(req.params.key);
-        res.json({success: true});
-      } catch (e: any) { res.status(500).json({error: e.message}) }
-    });
-
-    app.listen(4321, () => {
-      console.log(chalk.green('gbase studio running at http://localhost:4321 — press Ctrl+C to stop'));
-      open('http://localhost:4321');
-    });
   });
 
 program.parse(process.argv);
