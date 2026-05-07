@@ -1,7 +1,23 @@
 {
   "name": "@gbase/github",
   "version": "1.0.0",
-  "files": ["dist"],
+  "description": "GitHub adapter for gbase",
+  "license": "MIT",
+  "author": "Manas Dutta",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/manasdutta04/gbase.git"
+  },
+  "homepage": "https://github.com/manasdutta04/gbase#readme",
+  "keywords": [
+    "gbase",
+    "github",
+    "adapter",
+    "database"
+  ],
+  "files": [
+    "dist"
+  ],
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "exports": {
@@ -14,7 +30,7 @@
     "build": "tsup src/index.ts --format cjs,esm --dts --clean"
   },
   "peerDependencies": {
-    "gbase": "workspace:*"
+    "gbase": ">=1.0.0"
   },
   "devDependencies": {
     "typescript": "^5.0.0",

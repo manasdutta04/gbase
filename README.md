@@ -1,4 +1,9 @@
 # GBase
+[![npm](https://img.shields.io/npm/v/gbase)](https://www.npmjs.com/package/gbase)
+[![npm](https://img.shields.io/npm/dm/gbase)](https://www.npmjs.com/package/gbase)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
+
 **Zero-cost, version-controlled database powered by Git.**
 
 GBase turns any Git repository (GitHub, GitLab, or Bitbucket) into a lightweight, durable, and free database with a MongoDB-like API. Perfect for hobby projects, static sites, and serverless applications.

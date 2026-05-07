@@ -1,10 +1,23 @@
 {
   "name": "@gbase/cli",
   "version": "1.0.0",
+  "description": "CLI for gbase",
+  "license": "MIT",
+  "author": "Manas Dutta",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/manasdutta04/gbase.git"
+  },
+  "homepage": "https://github.com/manasdutta04/gbase#readme",
+  "keywords": [
+    "gbase",
+    "cli",
+    "database",
+    "git"
+  ],
   "files": [
     "dist"
   ],
-  "description": "CLI for gbase",
   "main": "dist/bin.js",
   "type": "module",
   "bin": {

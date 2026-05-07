@@ -1,7 +1,27 @@
 {
   "name": "gbase",
   "version": "1.0.0",
-  "files": ["dist"],
+  "description": "Zero-cost, version-controlled database powered by Git",
+  "license": "MIT",
+  "author": "Manas Dutta",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/manasdutta04/gbase.git"
+  },
+  "homepage": "https://github.com/manasdutta04/gbase#readme",
+  "keywords": [
+    "database",
+    "git",
+    "github",
+    "gitlab",
+    "bitbucket",
+    "json",
+    "serverless",
+    "zero-cost"
+  ],
+  "files": [
+    "dist"
+  ],
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "exports": {
